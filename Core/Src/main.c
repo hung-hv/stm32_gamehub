@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include "st7789.h"
 #include "fonts.h"
+#include "st7789_map.h"
 #include <stdio.h>
 
 /* USER CODE END Includes */
@@ -110,26 +111,44 @@ int main(void)
   myDisplay.rst_pin = GPIO_PIN_14;
 
   ST7789_Init(&myDisplay);
-  HAL_Delay(1000);
-  ST7789_FillScreen(&myDisplay, 0x0000);
-  HAL_Delay(1000);
+  HAL_Delay(100);
 
-  // 4. Khai báo biến quản lý tọa độ và kích thước hình chữ nhật
-  uint16_t rect_x = 0;       // Tọa độ X ban đầu (bắt đầu từ mép trái)
-  uint16_t rect_y = 100;     // Tọa độ Y cố định ở giữa màn hình
-  uint16_t rect_w = 40;      // Chiều rộng hình chữ nhật
-  uint16_t rect_h = 40;      // Chiều cao hình chữ nhật
-  uint16_t rect_speed = 4;   // Vận tốc di chuyển (4 pixel mỗi frame)
+  /* ------------------------------------------------------------------ */
+  /* STATIC TILE PREVIEW                                                 */
+  /* Draws one of every tile type at fixed positions.                   */
+  /* Expected result:                                                    */
+  /*   - Full sky-blue background                                       */
+  /*   - 2 brown ground rows across the bottom                          */
+  /*   - 1 green pipe (bright top, dark body) on the left               */
+  /*   - Brick / Question / Brick platform row in the upper-middle      */
+  /*   - 1 grey block on the left side                                  */
+  /* ------------------------------------------------------------------ */
 
+  /* Sky background */
+  ST7789_FillScreen(&myDisplay, COLOR_SKY);
 
-  // In chuỗi cố định
-	// Cú pháp: (dev, X, Y, Chuỗi, Biến_Font, Màu_Chữ, Màu_Nền)
-	ST7789_WriteString(&myDisplay, 10, 10, "SCORE: 01500", Font_7x10, 0xFFFF, 0x0000); // Chữ trắng nền đen
-	ST7789_WriteString(&myDisplay, 10, 30, "READY PLAYER 1", Font_7x10, 0x07E0, 0x0000); // Chữ xanh lá
+  /* Ground: rows 13 and 14 (y = 208 and 224) */
+  ST7789_DrawRectangle(&myDisplay, 0, 13u * TILE_SIZE, LCD_WIDTH, TILE_SIZE, COLOR_GROUND);
+  ST7789_DrawRectangle(&myDisplay, 0, 14u * TILE_SIZE, LCD_WIDTH, TILE_SIZE, COLOR_GROUND);
 
-	// Thử in biến số thay đổi (Dùng sprintf để format chuỗi)
-	char debug_buffer[20];
-	int player_health = 100;
+  /* Pipe: cols 5-6, rows 11-13 (lip = bright green, body = dark green) */
+  ST7789_DrawRectangle(&myDisplay,  5u * TILE_SIZE, 11u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_PIPE_LT); /* TL */
+  ST7789_DrawRectangle(&myDisplay,  6u * TILE_SIZE, 11u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_PIPE_LT); /* TR */
+  ST7789_DrawRectangle(&myDisplay,  5u * TILE_SIZE, 12u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_PIPE_DK); /* BL */
+  ST7789_DrawRectangle(&myDisplay,  6u * TILE_SIZE, 12u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_PIPE_DK); /* BR */
+
+  /* Brick / Question platform: row 8 (y = 128), cols 10-13 */
+  ST7789_DrawRectangle(&myDisplay, 10u * TILE_SIZE, 8u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_BRICK);
+  ST7789_DrawRectangle(&myDisplay, 11u * TILE_SIZE, 8u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_BRICK);
+  ST7789_DrawRectangle(&myDisplay, 12u * TILE_SIZE, 8u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_QUESTION);
+  ST7789_DrawRectangle(&myDisplay, 13u * TILE_SIZE, 8u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_BRICK);
+
+  /* Stone block: row 10 (y = 160), col 2 */
+  ST7789_DrawRectangle(&myDisplay,  2u * TILE_SIZE, 10u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_BLOCK);
+
+  /* Camera X (reserved for ST7789_RenderMap when ready) */
+  uint32_t camera_x = 0u;
+  uint32_t led_counter = 0u;   /* counts 16ms ticks → toggle every 31 ticks ≈ 500ms */
 
   /* USER CODE END 2 */
 
@@ -140,27 +159,36 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  ST7789_DrawRectangle(&myDisplay, rect_x, rect_y, rect_w, rect_h, 0x0000);
+	  /* Render the full tilemap at the current camera position.
+	   * Every pixel is covered by a tile colour — no FillScreen needed. */
+	  ST7789_RenderMap(&myDisplay, camera_x);
 
-	  // BƯỚC B: Tính toán tọa độ MỚI
-	  rect_x += rect_speed;
-
-	  // Nếu chạm hoặc vượt quá mép phải màn hình (320 pixel), quay trở lại mép trái (0)
-	  if (rect_x + rect_w >= 320) {
-		  rect_x = 0;
+	  /* Button-driven camera scroll.
+	   * Both buttons are active-LOW (GPIO_PIN_RESET = pressed).
+	   * PB0  → scroll RIGHT (+4 px)   PC13 → scroll LEFT  (-4 px)  */
+	  /* PB2 LED: toggle every ~500 ms (31 × 16 ms = 496 ms), independent of buttons */
+	  led_counter++;
+	  if (led_counter >= 31u) {
+		  led_counter = 0u;
+		  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_2);
 	  }
 
-	  // BƯỚC C: Vẽ hình chữ nhật ở vị trí MỚI (Ví dụ: Màu Đỏ 0xF800 hoặc Xanh lá 0x07E0)
-	  ST7789_DrawRectangle(&myDisplay, rect_x, rect_y, rect_w, rect_h, 0xF800);
+	  const uint8_t btn_right = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_0)  == GPIO_PIN_RESET);
+	  const uint8_t btn_left  = (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_RESET);
 
-	  // BƯỚC D: Tạo độ trễ (Delay) để kiểm soát tốc độ khung hình (FPS)
-	  // Delay 33ms tương đương với tần số quét ~30 FPS (Frames Per Second)
-//	  HAL_Delay(33);
-//	  sprintf(debug_buffer, "HP: %d%% ", player_health);
-//	  ST7789_WriteString(&myDisplay, 10, 200, debug_buffer, Font_7x10, 0xF800, 0x0000); // Chữ đỏ
-	  ST7789_WriteString(&myDisplay, 240/2, 320/2, "I LOVE MINH ANH <3", Font_7x10, 0x07E0, 0x0000); // Chữ xanh lá
+	  if (btn_right && !btn_left) {
+		  if (camera_x + 4u <= (MAP_PIXEL_WIDTH - LCD_WIDTH))
+			  camera_x += 4u;
+		  else
+			  camera_x = (MAP_PIXEL_WIDTH - LCD_WIDTH);
+	  } else if (btn_left && !btn_right) {
+		  if (camera_x >= 4u)
+			  camera_x -= 4u;
+		  else
+			  camera_x = 0u;
+	  }
 
-	  HAL_Delay(1000);
+	  HAL_Delay(16u);    /* ~60 fps polling rate */
   }
   /* USER CODE END 3 */
 }
@@ -280,7 +308,7 @@ static void MX_SPI2_Init(void)
   hspi2.Init.CLKPolarity = SPI_POLARITY_HIGH;
   hspi2.Init.CLKPhase = SPI_PHASE_2EDGE;
   hspi2.Init.NSS = SPI_NSS_SOFT;
-  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
+  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
   hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -318,18 +346,30 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12|GPIO_PIN_14, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2|GPIO_PIN_12|GPIO_PIN_14, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : PB12 PB14 */
-  GPIO_InitStruct.Pin = GPIO_PIN_12|GPIO_PIN_14;
+  /*Configure GPIO pin : PC13 */
+  GPIO_InitStruct.Pin = GPIO_PIN_13;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PB0 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PB2 PB12 PB14 */
+  GPIO_InitStruct.Pin = GPIO_PIN_2|GPIO_PIN_12|GPIO_PIN_14;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -343,7 +383,13 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
-
+  /* PB2 = debug LED output (active HIGH) */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_RESET);
+  GPIO_InitStruct.Pin   = GPIO_PIN_2;
+  GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull  = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
   /* USER CODE END MX_GPIO_Init_2 */
 }
 

@@ -47,9 +47,12 @@ void ST7789_Init(ST7789_HandleTypeDef *dev) {
     // Mẹo: Nếu màn hình bị ngược chữ hoặc ngược hướng di chuyển,
     // bạn hãy thử thay 0x70 bằng một trong các mã: 0xAC, 0xA0, hoặc 0x60.
 
-    // 5. Lệnh INVON (0x21): Bật đảo màu (Rất quan trọng với màn hình IPS)
-    // Màn hình ST7789 IPS nếu không có lệnh này sẽ bị hiện tượng màu sắc âm bản (đen thành trắng)
-    WriteCommand(dev, 0x21);
+    // 5. INVON (0x21) — commented out: this panel is NOT a negative-image IPS.
+    // Enabling INVON caused all RGB565 colours to appear as their bitwise-NOT
+    // complement (Red→Cyan, Green→Magenta, Blue→Yellow, Black→White).
+    // Use INVOFF (0x20) explicitly so the display stays in normal mode.
+    WriteCommand(dev, 0x20);   /* INVOFF – normal display, colours correct */
+    // WriteCommand(dev, 0x21); /* INVON  – only enable for negative-image IPS panels */
 
     // 6. Lệnh DISPON (0x29): Bật hiển thị màn hình
     WriteCommand(dev, 0x29);
@@ -78,14 +81,21 @@ void ST7789_FillScreen(ST7789_HandleTypeDef *dev, uint16_t color) {
 
     WriteCommand(dev, 0x2C); // Write RAM
 
-    uint32_t total_pixels = 320 * 240; // Phải là uint32_t để không bị tràn số
-    uint8_t color_bytes[2] = {(color >> 8) & 0xFF, color & 0xFF};
+    /* Optimization: fill one 320-pixel scanline buffer once, send 240 rows.
+     * Reduces SPI calls from 76,800 to 240 (320x fewer transactions).   */
+    static uint8_t line_buf[320u * 2u];   /* 640 bytes — one full LCD row */
+    const uint8_t hi = (color >> 8) & 0xFF;
+    const uint8_t lo =  color       & 0xFF;
+    for (uint16_t i = 0u; i < 320u; i++) {
+        line_buf[i * 2u]      = hi;
+        line_buf[i * 2u + 1u] = lo;
+    }
 
     HAL_GPIO_WritePin(dev->cs_port, dev->cs_pin, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(dev->dc_port, dev->dc_pin, GPIO_PIN_SET);
 
-    for (uint32_t i = 0; i < total_pixels; i++) {
-        HAL_SPI_Transmit(dev->spi, color_bytes, 2, HAL_MAX_DELAY);
+    for (uint16_t row = 0u; row < 240u; row++) {
+        HAL_SPI_Transmit(dev->spi, line_buf, 320u * 2u, HAL_MAX_DELAY);
     }
 
     HAL_GPIO_WritePin(dev->cs_port, dev->cs_pin, GPIO_PIN_SET);
@@ -110,20 +120,25 @@ void ST7789_DrawRectangle(ST7789_HandleTypeDef *dev, uint16_t x, uint16_t y, uin
     WriteData(dev, (y >> 8) & 0xFF);  WriteData(dev, y & 0xFF);
     WriteData(dev, (y_end >> 8) & 0xFF); WriteData(dev, y_end & 0xFF);
 
-    // 2. Lệnh chuẩn bị ghi vào RAM
     WriteCommand(dev, 0x2C);
 
-    // 3. Đổ màu liên tục vào cửa sổ đã mở
-    uint32_t total_pixels = w * h;
-    uint8_t color_bytes[2] = {(color >> 8) & 0xFF, color & 0xFF};
+    /* Optimization: pre-fill one scanline, send row-by-row.
+     * For a 16x16 tile : 16 HAL_SPI_Transmit calls  (was 256)  → 16x fewer.
+     * For a 320x16 row : 16 HAL_SPI_Transmit calls  (was 5120) → 320x fewer.
+     * The static buffer is shared with FillScreen — 640 bytes total.    */
+    static uint8_t line_buf[320u * 2u];   /* one full LCD row = 640 bytes */
+    const uint8_t hi = (color >> 8) & 0xFF;
+    const uint8_t lo =  color       & 0xFF;
+    for (uint16_t i = 0u; i < w; i++) {
+        line_buf[i * 2u]      = hi;
+        line_buf[i * 2u + 1u] = lo;
+    }
 
-    // Bật CS một lần duy nhất và chuyển sang Data mode để đẩy data cho nhanh
     HAL_GPIO_WritePin(dev->cs_port, dev->cs_pin, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(dev->dc_port, dev->dc_pin, GPIO_PIN_SET);
 
-    for (uint32_t i = 0; i < total_pixels; i++) {
-        // Thay vì gọi hàm WriteData rườm rà, ta gọi thẳng SPI của HAL ở đây để tối ưu tốc độ
-        HAL_SPI_Transmit(dev->spi, color_bytes, 2, HAL_MAX_DELAY);
+    for (uint16_t row = 0u; row < h; row++) {
+        HAL_SPI_Transmit(dev->spi, line_buf, (uint16_t)(w * 2u), HAL_MAX_DELAY);
     }
 
     HAL_GPIO_WritePin(dev->cs_port, dev->cs_pin, GPIO_PIN_SET);
