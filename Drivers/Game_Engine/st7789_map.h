@@ -77,4 +77,17 @@ typedef enum {
  */
 void ST7789_RenderMap(ST7789_HandleTypeDef *dev, uint32_t camera_x);
 
+/**
+ * @brief  Render a single 16x16 tile at the specified position.
+ *
+ * @param  dev       Pointer to the initialised ST7789 device handle.
+ * @param  x         X-coordinate (in pixels) of the top-left corner of the tile.
+ * @param  y         Y-coordinate (in pixels) of the top-left corner of the tile.
+ * @param  tile_id   ID of the tile to render (see TileID_t).
+ */
+void ST7789_RenderTile16x16(ST7789_HandleTypeDef *dev, uint16_t x, uint16_t y, uint8_t tile_id);
+
+void ST7789_RenderScreen(ST7789_HandleTypeDef *dev);
+
+
 #endif /* GAME_ENGINE_ST7789_MAP_H_ */

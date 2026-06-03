@@ -53,7 +53,9 @@ extern "C" {
 void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
-
+/* Button flags set by EXTI ISR, consumed by main loop */
+extern volatile uint8_t btn_right;
+extern volatile uint8_t btn_left;
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/

@@ -21,7 +21,7 @@
  */
 
 #include "st7789_map.h"
-#include "mario_map.h"
+#include "mario_map.h"   /* Mario_World_1_1[] */
 
 /* -------------------------------------------------------------------------
  *  Colour lookup table — indexed directly by TileID_t value (0..8).
@@ -123,12 +123,97 @@ void ST7789_RenderMap(ST7789_HandleTypeDef *dev, uint32_t camera_x)
             }
 
             /* ----- Draw the tile --------------------------------------- */
-            ST7789_DrawRectangle(dev,
-                                 (uint16_t)draw_x,
-                                 screen_y,
-                                 (uint16_t)draw_w,
-                                 TILE_SIZE,
-                                 tile_colors[tile_id]);
+            if ((uint16_t)draw_w == TILE_SIZE)
+            {
+                const uint8_t *sprite = tile_sprites[tile_id];
+
+                if (sprite != NULL)
+                {
+                    /* Flash sprite — DMA reads directly from .rodata.
+                     * No CPU fill needed; ST7789_DrawTile_DMA calls
+                     * ST7789_WaitDMA internally before setting the window. */
+                    ST7789_DrawTile_DMA(dev,
+                                        (uint16_t)draw_x,
+                                        screen_y,
+                                        TILE_SIZE,
+                                        TILE_SIZE,
+                                        (uint8_t *)sprite);
+                }
+                else
+                {
+                    /* Solid colour — double-buffer DMA (ping-pong).
+                     *
+                     * Two static buffers alternate each tile:
+                     *   CPU fills buf[next]  while  DMA sends buf[current]
+                     * ST7789_WaitBuf() only stalls if the CPU lapped the DMA,
+                     * which almost never happens at 16x16 solid-colour tiles.
+                     */
+                    static uint8_t tile_buf[2u][TILE_SIZE * TILE_SIZE * 2u];
+                    static uint8_t buf_idx = 0u;
+
+                    uint8_t *buf = tile_buf[buf_idx];
+
+                    /* Wait only if this specific buffer is still in DMA. */
+                    ST7789_WaitBuf(buf);
+
+                    /* Fill the idle buffer with the tile colour. */
+                    const uint8_t hi = (tile_colors[tile_id] >> 8u) & 0xFFu;
+                    const uint8_t lo =  tile_colors[tile_id]        & 0xFFu;
+                    for (uint16_t p = 0u; p < (uint16_t)(TILE_SIZE * TILE_SIZE); p++) {
+                        buf[p * 2u]      = hi;
+                        buf[p * 2u + 1u] = lo;
+                    }
+
+                    /* Fire DMA (returns immediately). */
+                    ST7789_DrawTile_DMA(dev,
+                                        (uint16_t)draw_x,
+                                        screen_y,
+                                        TILE_SIZE,
+                                        TILE_SIZE,
+                                        buf);
+
+                    /* Alternate to the other buffer for the next tile. */
+                    buf_idx ^= 1u;
+                }
+            }
+            else
+            {
+                /* Partial tile (clipped edge) — wait for DMA then blocking fill. */
+                ST7789_WaitDMA(dev);
+                ST7789_DrawRectangle(dev,
+                                     (uint16_t)draw_x,
+                                     screen_y,
+                                     (uint16_t)draw_w,
+                                     TILE_SIZE,
+                                     tile_colors[tile_id]);
+            }
+        }
+    }
+    /* Ensure the very last DMA burst is complete before returning. */
+    ST7789_WaitDMA(dev);
+}
+
+void ST7789_RenderTile16x16(ST7789_HandleTypeDef *dev, uint16_t x, uint16_t y, uint8_t tile_id)
+{
+    const uint8_t *sprite = tile_sprites[tile_id];
+    ST7789_DrawTile_DMA(dev, x, y, TILE_SIZE, TILE_SIZE, (uint8_t *)sprite);
+}
+
+void ST7789_RenderScreen(ST7789_HandleTypeDef *dev)
+{
+    int map_row = 0;
+    int map_col = 0;
+    int lcd_pixel_x = 0;
+    int lcd_pixel_y = 0;
+    uint8_t tile_id = 0;
+    // const uint8_t *sprite = tile_sprites[tile_id];
+    for (map_row = 0u; map_row < (uint8_t)MAP_ROWS; map_row++) {
+        lcd_pixel_y = map_row*TILE_SIZE;
+        for (map_col = 0u; map_col < (uint8_t)SCREEN_COLS; map_col++) {
+            lcd_pixel_x = map_col*TILE_SIZE;
+            /* get tile ID by check in global map_buffer */
+            tile_id = Mario_World_1_1[map_row][map_col];
+            ST7789_DrawTile_DMA(dev, lcd_pixel_x, lcd_pixel_y, TILE_SIZE, TILE_SIZE, tile_sprites[tile_id]);
         }
     }
 }

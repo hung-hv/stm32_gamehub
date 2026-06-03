@@ -8,6 +8,11 @@
 #include "st7789.h"
 #include "fonts.h"
 
+/* Tracks the active device during an async DMA transfer so the
+ * HAL_SPI_TxCpltCallback can release CS without a global handle. */
+static ST7789_HandleTypeDef *s_dma_dev = NULL;
+static const uint8_t        *s_dma_buf = NULL;  /* which buffer DMA is currently reading */
+
 // Hàm nội bộ (Private) chỉ dùng trong file này
 static void WriteCommand(ST7789_HandleTypeDef *dev, uint8_t cmd) {
     HAL_GPIO_WritePin(dev->cs_port, dev->cs_pin, GPIO_PIN_RESET);
@@ -21,6 +26,26 @@ static void WriteData(ST7789_HandleTypeDef *dev, uint8_t data) {
     HAL_GPIO_WritePin(dev->dc_port, dev->dc_pin, GPIO_PIN_SET); // Data mode
     HAL_SPI_Transmit(dev->spi, &data, 1, HAL_MAX_DELAY);
     HAL_GPIO_WritePin(dev->cs_port, dev->cs_pin, GPIO_PIN_SET);
+}
+
+/*  @brief Opens the pixel-write window on the display (column then row address). 
+* @param dev: Pointer to the display handle.
+* @param x0, y0: Top-left corner of the window (inclusive).
+* @param x1, y1: Bottom-right corner of the window (inclusive).
+*/
+static void SetWindow(ST7789_HandleTypeDef *dev,
+                      uint16_t x0, uint16_t y0,
+                      uint16_t x1, uint16_t y1)
+{
+    WriteCommand(dev, 0x2A);
+    WriteData(dev, (x0 >> 8) & 0xFF); WriteData(dev, x0 & 0xFF);
+    WriteData(dev, (x1 >> 8) & 0xFF); WriteData(dev, x1 & 0xFF);
+
+    WriteCommand(dev, 0x2B);
+    WriteData(dev, (y0 >> 8) & 0xFF); WriteData(dev, y0 & 0xFF);
+    WriteData(dev, (y1 >> 8) & 0xFF); WriteData(dev, y1 & 0xFF);
+
+    WriteCommand(dev, 0x2C); /* Memory Write — ready for pixel data */
 }
 
 void ST7789_Init(ST7789_HandleTypeDef *dev) {
@@ -139,6 +164,117 @@ void ST7789_DrawRectangle(ST7789_HandleTypeDef *dev, uint16_t x, uint16_t y, uin
 
     for (uint16_t row = 0u; row < h; row++) {
         HAL_SPI_Transmit(dev->spi, line_buf, (uint16_t)(w * 2u), HAL_MAX_DELAY);
+    }
+
+    HAL_GPIO_WritePin(dev->cs_port, dev->cs_pin, GPIO_PIN_SET);
+}
+
+/**
+ * @brief  Draw a tile (or any rectangle) from a pre-built pixel buffer using
+ *         non-blocking DMA.  Returns immediately; CS is released by
+ *         HAL_SPI_TxCpltCallback when the DMA burst completes.
+ *
+ * @param  dev        ST7789 device handle.
+ * @param  x, y       Top-left corner of the destination rectangle (pixels).
+ * @param  w, h       Width / height of the tile in pixels.
+ * @param  pTileData  Pointer to w*h RGB565 pixels in big-endian byte order.
+ *                    MUST remain valid until the DMA callback fires.
+ */
+void ST7789_DrawTile_DMA(ST7789_HandleTypeDef *dev,
+                          uint16_t x, uint16_t y,
+                          uint16_t w, uint16_t h,
+                          uint8_t *pTileData)
+{
+    /* 1. Wait for any previous DMA to finish — SPI must be idle before
+     *    SetWindow sends blocking commands on the same bus.             */
+    ST7789_WaitDMA(dev);
+
+    /* 2. Program the display window using blocking SPI (command bytes only). */
+    SetWindow(dev, x, y, (uint16_t)(x + w - 1u), (uint16_t)(y + h - 1u));
+
+    /* 2. Store device pointer so the TX callback can release CS. */
+    s_dma_dev = dev;
+    s_dma_buf = pTileData;
+
+    /* 3. Assert CS and switch to DATA mode, then fire DMA. */
+    HAL_GPIO_WritePin(dev->cs_port, dev->cs_pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(dev->dc_port, dev->dc_pin, GPIO_PIN_SET);
+
+    /* Total bytes = w * h * 2 (RGB565).  Fits uint16_t for tiles ≤ 128x128. */
+    HAL_SPI_Transmit_DMA(dev->spi, pTileData, (uint16_t)(w * h * 2u));
+    /* Returns immediately.  HAL_SPI_TxCpltCallback releases CS when done.  */
+}
+
+/**
+ * @brief  SPI TX-complete callback — releases CS after a DMA tile transfer.
+ *         Defined here (weak override) so it lives next to DrawTile_DMA.
+ */
+void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+    if ((s_dma_dev != NULL) && (hspi->Instance == s_dma_dev->spi->Instance))
+    {
+        HAL_GPIO_WritePin(s_dma_dev->cs_port, s_dma_dev->cs_pin, GPIO_PIN_SET);
+        s_dma_buf = NULL;
+        s_dma_dev = NULL;
+    }
+}
+
+/**
+ * @brief  Block until the specified buffer is no longer being read by DMA.
+ *         Returns immediately if DMA is using a different buffer or is idle.
+ *         Use with double-buffering: wait only on the buffer you are about
+ *         to refill, not on the one currently being transmitted.
+ */
+void ST7789_WaitBuf(const uint8_t *buf)
+{
+    while (s_dma_buf == buf) {}
+}
+
+/**
+ * @brief  Block until any in-progress DMA tile transfer completes.
+ *         Call at the end of a frame to ensure the last burst finished.
+ */
+void ST7789_WaitDMA(ST7789_HandleTypeDef *dev)
+{
+    while (s_dma_dev == dev) {}
+}
+
+void ST7789_DrawRectangle_DMA(ST7789_HandleTypeDef *dev, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color)
+{
+    if ((x >= 320u) || (y >= 240u)) return;
+    if ((x + w) > 320u) w = 320u - x;
+    if ((y + h) > 240u) h = 240u - y;
+
+    uint16_t x_end = x + w - 1u;
+    uint16_t y_end = y + h - 1u;
+
+    WriteCommand(dev, 0x2A);
+    WriteData(dev, (x >> 8) & 0xFF);     WriteData(dev, x & 0xFF);
+    WriteData(dev, (x_end >> 8) & 0xFF); WriteData(dev, x_end & 0xFF);
+
+    WriteCommand(dev, 0x2B);
+    WriteData(dev, (y >> 8) & 0xFF);     WriteData(dev, y & 0xFF);
+    WriteData(dev, (y_end >> 8) & 0xFF); WriteData(dev, y_end & 0xFF);
+
+    WriteCommand(dev, 0x2C);
+
+    /* Pre-fill one scanline with the solid colour (RGB565, big-endian). */
+    static uint8_t line_buf[320u * 2u];
+    const uint8_t hi = (color >> 8) & 0xFF;
+    const uint8_t lo =  color       & 0xFF;
+    for (uint16_t i = 0u; i < w; i++) {
+        line_buf[i * 2u]      = hi;
+        line_buf[i * 2u + 1u] = lo;
+    }
+
+    HAL_GPIO_WritePin(dev->cs_port, dev->cs_pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(dev->dc_port, dev->dc_pin, GPIO_PIN_SET);
+
+    for (uint16_t row = 0u; row < h; row++) {
+        HAL_SPI_Transmit_DMA(dev->spi, line_buf, (uint16_t)(w * 2u));
+        /* Spin-wait for current DMA burst to finish before sending next row.
+         * Keeps CS asserted and the window open throughout the transfer.  */
+        while (HAL_SPI_GetState(dev->spi) != HAL_SPI_STATE_READY) {}
     }
 
     HAL_GPIO_WritePin(dev->cs_port, dev->cs_pin, GPIO_PIN_SET);

@@ -28,6 +28,10 @@ void ST7789_Init(ST7789_HandleTypeDef *dev);
 void ST7789_FillScreen(ST7789_HandleTypeDef *dev, uint16_t color);
 void ST7789_DrawPixel(ST7789_HandleTypeDef *dev, uint16_t x, uint16_t y, uint16_t color);
 void ST7789_DrawRectangle(ST7789_HandleTypeDef *dev, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color);
+void ST7789_DrawRectangle_DMA(ST7789_HandleTypeDef *dev, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color);
+void ST7789_DrawTile_DMA(ST7789_HandleTypeDef *dev, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t *pTileData);
+void ST7789_WaitBuf(const uint8_t *buf);
+void ST7789_WaitDMA(ST7789_HandleTypeDef *dev);
 
 /* Write char and string */
 void ST7789_WriteChar(ST7789_HandleTypeDef *dev, uint16_t x, uint16_t y, char ch, FontDef font, uint16_t color, uint16_t bgcolor);

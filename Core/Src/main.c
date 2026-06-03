@@ -46,9 +46,17 @@
 /* Private variables ---------------------------------------------------------*/
 
 SPI_HandleTypeDef hspi2;
+DMA_HandleTypeDef handle_GPDMA1_Channel5;
 
 /* USER CODE BEGIN PV */
 ST7789_HandleTypeDef myDisplay;
+
+/*GOLOBAL variables*/
+/* Camera X (reserved for ST7789_RenderMap when ready) */
+ uint32_t camera_x = 0u;
+ uint32_t led_counter = 0u;   /* counts 16ms ticks → toggle every 31 ticks ≈ 500ms */
+ volatile uint8_t btn_right = 0;
+ volatile uint8_t btn_left = 0;
 
 /* USER CODE END PV */
 
@@ -56,6 +64,7 @@ ST7789_HandleTypeDef myDisplay;
 void SystemClock_Config(void);
 static void MPU_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_GPDMA1_Init(void);
 static void MX_ICACHE_Init(void);
 static void MX_SPI2_Init(void);
 /* USER CODE BEGIN PFP */
@@ -99,6 +108,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_GPDMA1_Init();
   MX_ICACHE_Init();
   MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
@@ -146,10 +156,8 @@ int main(void)
   /* Stone block: row 10 (y = 160), col 2 */
   ST7789_DrawRectangle(&myDisplay,  2u * TILE_SIZE, 10u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_BLOCK);
 
-  /* Camera X (reserved for ST7789_RenderMap when ready) */
-  uint32_t camera_x = 0u;
-  uint32_t led_counter = 0u;   /* counts 16ms ticks → toggle every 31 ticks ≈ 500ms */
 
+  uint8_t tile_id = 0;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -161,34 +169,43 @@ int main(void)
     /* USER CODE BEGIN 3 */
 	  /* Render the full tilemap at the current camera position.
 	   * Every pixel is covered by a tile colour — no FillScreen needed. */
-	  ST7789_RenderMap(&myDisplay, camera_x);
+	  // ST7789_RenderMap(&myDisplay, camera_x);
 
 	  /* Button-driven camera scroll.
 	   * Both buttons are active-LOW (GPIO_PIN_RESET = pressed).
 	   * PB0  → scroll RIGHT (+4 px)   PC13 → scroll LEFT  (-4 px)  */
 	  /* PB2 LED: toggle every ~500 ms (31 × 16 ms = 496 ms), independent of buttons */
+    ST7789_RenderScreen(&myDisplay);
 	  led_counter++;
-	  if (led_counter >= 31u) {
+	  if (led_counter >= 20u) {
 		  led_counter = 0u;
 		  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_2);
+      ST7789_RenderTile16x16(&myDisplay, 50, 50, tile_id);
+      tile_id = tile_id +1;
+      if(tile_id >= 5){
+        tile_id = 0;
+      }
 	  }
 
-	  const uint8_t btn_right = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_0)  == GPIO_PIN_RESET);
-	  const uint8_t btn_left  = (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_RESET);
+	  btn_right = (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_7)  == GPIO_PIN_RESET);
+	  btn_left  = (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9) == GPIO_PIN_RESET);
 
-	  if (btn_right && !btn_left) {
+	  if (btn_right) {
 		  if (camera_x + 4u <= (MAP_PIXEL_WIDTH - LCD_WIDTH))
 			  camera_x += 4u;
 		  else
 			  camera_x = (MAP_PIXEL_WIDTH - LCD_WIDTH);
-	  } else if (btn_left && !btn_right) {
+	  }
+	  if (btn_left) {
 		  if (camera_x >= 4u)
 			  camera_x -= 4u;
 		  else
 			  camera_x = 0u;
 	  }
 
-	  HAL_Delay(16u);    /* ~60 fps polling rate */
+	  HAL_Delay(10u);    /* ~60 fps polling rate */
+	  btn_right = 0;
+	  btn_left = 0;
   }
   /* USER CODE END 3 */
 }
@@ -254,6 +271,34 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief GPDMA1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_GPDMA1_Init(void)
+{
+
+  /* USER CODE BEGIN GPDMA1_Init 0 */
+
+  /* USER CODE END GPDMA1_Init 0 */
+
+  /* Peripheral clock enable */
+  __HAL_RCC_GPDMA1_CLK_ENABLE();
+
+  /* GPDMA1 interrupt Init */
+    HAL_NVIC_SetPriority(GPDMA1_Channel5_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(GPDMA1_Channel5_IRQn);
+
+  /* USER CODE BEGIN GPDMA1_Init 1 */
+
+  /* USER CODE END GPDMA1_Init 1 */
+  /* USER CODE BEGIN GPDMA1_Init 2 */
+
+  /* USER CODE END GPDMA1_Init 2 */
+
+}
+
+/**
   * @brief ICACHE Initialization Function
   * @param None
   * @retval None
@@ -303,7 +348,7 @@ static void MX_SPI2_Init(void)
   /* SPI2 parameter configuration*/
   hspi2.Instance = SPI2;
   hspi2.Init.Mode = SPI_MODE_MASTER;
-  hspi2.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi2.Init.Direction = SPI_DIRECTION_2LINES_TXONLY;
   hspi2.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi2.Init.CLKPolarity = SPI_POLARITY_HIGH;
   hspi2.Init.CLKPhase = SPI_PHASE_2EDGE;
@@ -381,6 +426,19 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PC7 PC9 */
+  GPIO_InitStruct.Pin = GPIO_PIN_7|GPIO_PIN_9;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI7_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI7_IRQn);
+
+  HAL_NVIC_SetPriority(EXTI9_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
   /* PB2 = debug LED output (active HIGH) */
