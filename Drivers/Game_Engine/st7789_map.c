@@ -23,6 +23,8 @@
 #include "st7789_map.h"
 #include "mario_map.h"   /* Mario_World_1_1[] */
 
+uint16_t FrameBuffer[LCD_WIDTH * LCD_HEIGHT];
+
 /* -------------------------------------------------------------------------
  *  Colour lookup table — indexed directly by TileID_t value (0..8).
  *  Pipe top sections get the brighter green; body sections get darker green
@@ -217,3 +219,87 @@ void ST7789_RenderScreen(ST7789_HandleTypeDef *dev)
         }
     }
 }
+
+void Engine_Draw_Sprite_To_Buffer(int dest_x, int dest_y, const uint16_t *sprite_data) {
+    if (dest_x <= -TILE_SIZE || dest_x >= LCD_WIDTH || dest_y <= -TILE_SIZE || dest_y >= LCD_HEIGHT) return;
+
+    int x_start = 0, x_end = TILE_SIZE;
+    int y_start = 0, y_end = TILE_SIZE;
+
+    if (dest_x < 0)                  x_start = -dest_x;
+    if (dest_x + TILE_SIZE > LCD_WIDTH) x_end = LCD_WIDTH - dest_x;
+    if (dest_y < 0)                  y_start = -dest_y;
+    if (dest_y + TILE_SIZE > LCD_HEIGHT) y_end = LCD_HEIGHT - dest_y;
+
+    for (int y = y_start; y < y_end; y++) {
+        int buffer_row = (dest_y + y) * LCD_WIDTH + dest_x;
+        int tile_row   = y * TILE_SIZE;
+
+        for (int x = x_start; x < x_end; x++) {
+            uint16_t color = sprite_data[tile_row + x];
+            
+            // Mẹo: Giả sử màu Đen (0x0000) là màu nền trong suốt của nhân vật Mario
+            if (color != 0x0000) { 
+                FrameBuffer[buffer_row + x] = color;
+            }
+        }
+    }
+}
+
+/* Renders the tilemap to a frame buffer, accounting for camera scroll position.
+* Calculates which map columns are visible, applies horizontal offset clipping,
+* and prepares tiles for display on the 320x240 LCD.
+*
+* camera_x = 20 (pixels scrolled into the map)
+*
+* MAP TILES:
+*  col:     0          1          2          3
+*        |<-16px->|<-16px->|<-16px->|<-16px->| ...
+*        +--------+--------+--------+--------+
+*        |  tile0 |  tile1 |  tile2 |  tile3 |
+*        +--------+--------+--------+--------+
+*                  ^
+*                  | camera_x=20
+*
+* map_start_col = 20 / 16 = 1   (first tile column that is visible)
+* map_offset_x  = 20 % 16 = 4   (pixels into tile1 that are off-screen to the left)
+*
+* SCREEN:
+*  screen_x:  0        16        32 ...
+*             +--------+--------+--
+*             | tile1  | tile2  |
+*             +--------+--------+--
+*              <-4px->|
+*              clipped  ^
+*                       first visible pixel of tile1
+*
+*  tile1 is drawn starting at screen_x = -map_offset_x = -4
+*  then clipped so only pixels [4..15] of tile1 appear at screen [0..11]
+* @param camera_x Horizontal pixel offset into the map (0 = leftmost).
+*/
+void Engine_Draw_Map_To_Buffer(int camera_x){
+    /*get the index of the starting column in the map based on the camera position */
+    int map_tile_start_col = camera_x / TILE_SIZE; 
+    /*get the pixel offset within the starting column */
+    int map_px_offset_x  = camera_x % TILE_SIZE;
+    int map_tile_row, screen_tile_col;
+    int map_tile_current_col;
+    uint8_t tile_id;
+    const uint8_t *sprite;
+    int screen_px_x = 0;
+    int screen_px_y = 0;
+    for (map_tile_row = 0u; map_tile_row < (uint8_t)MAP_ROWS; map_tile_row++) {
+        for (screen_tile_col = 0u; screen_tile_col <= (uint8_t)MAX_SCREEN_COLS; screen_tile_col++) {
+            map_tile_current_col = map_tile_start_col + (uint16_t)screen_tile_col;
+            /*get current tile ID from the map */
+            tile_id = Mario_World_1_1[map_tile_row][map_tile_current_col];
+            /*get sprite for the current tile */
+            sprite = tile_sprites[tile_id];
+            /*calculate the screen pixel position for this tile */
+            screen_px_x = ((int16_t)screen_tile_col * TILE_SIZE) - map_px_offset_x;
+            screen_px_y = (int16_t)map_tile_row * TILE_SIZE;
+            Engine_Draw_Sprite_To_Buffer(screen_px_x, screen_px_y, (const uint16_t *)sprite);
+        }
+    }
+}
+
