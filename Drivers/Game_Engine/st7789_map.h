@@ -25,6 +25,7 @@
 #define MAP_ROWS         ((uint16_t)15u)   /* tile rows  in map (15*16=240px) */
 #define MAP_COLS         ((uint16_t)90u)   /* tile cols  in map (90*16=1440px) */
 #define SCREEN_COLS      ((uint16_t)20u)   /* visible tile columns on screen  */
+#define MAX_SCREEN_COLS  ((uint16_t)(SCREEN_COLS+1))   /* max tile columns on screen  */
 #define SCREEN_ROWS      ((uint16_t)15u)   /* visible tile rows  on screen    */
 #define LCD_WIDTH        ((uint16_t)320u)  /* ST7789 landscape width  (px)    */
 #define LCD_HEIGHT       ((uint16_t)240u)  /* ST7789 landscape height (px)    */
@@ -89,5 +90,9 @@ void ST7789_RenderTile16x16(ST7789_HandleTypeDef *dev, uint16_t x, uint16_t y, u
 
 void ST7789_RenderScreen(ST7789_HandleTypeDef *dev);
 
+void Engine_Draw_Sprite_To_Buffer(int dest_x, int dest_y, const uint16_t *sprite_data);
+void Engine_Draw_Tile_Loop_Clipping(int dest_x, int dest_y, const uint16_t *tile_data);
+void Engine_Draw_Map_To_Buffer(int camera_x);
+void Engine_Render_Frame(ST7789_HandleTypeDef *dev, int camera_x, int mario_x, int mario_y);
 
 #endif /* GAME_ENGINE_ST7789_MAP_H_ */

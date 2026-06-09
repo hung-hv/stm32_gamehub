@@ -12,6 +12,7 @@
  * HAL_SPI_TxCpltCallback can release CS without a global handle. */
 static ST7789_HandleTypeDef *s_dma_dev = NULL;
 static const uint8_t        *s_dma_buf = NULL;  /* which buffer DMA is currently reading */
+volatile uint8_t dma_tx_complete = 0; /* Flag set in DMA complete callback, cleared before new transfer */
 
 // Hàm nội bộ (Private) chỉ dùng trong file này
 static void WriteCommand(ST7789_HandleTypeDef *dev, uint8_t cmd) {
@@ -205,6 +206,18 @@ void ST7789_DrawTile_DMA(ST7789_HandleTypeDef *dev,
     /* Returns immediately.  HAL_SPI_TxCpltCallback releases CS when done.  */
 }
 
+void ST7789_RenderMap(ST7789_HandleTypeDef *dev, uint8_t *frame_buf, uint32_t buf_size) {
+    SetWindow(dev, 0, 0, 319, 239);
+
+    HAL_GPIO_WritePin(dev->cs_port, dev->cs_pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(dev->dc_port, dev->dc_pin, GPIO_PIN_SET);
+
+    /* Send the entire frame buffer in one blocking call. */
+    HAL_SPI_Transmit(dev->spi, frame_buf, 320u * 240u * 2u, HAL_MAX_DELAY);
+
+    HAL_GPIO_WritePin(dev->cs_port, dev->cs_pin, GPIO_PIN_SET);
+}
+
 /**
  * @brief  SPI TX-complete callback — releases CS after a DMA tile transfer.
  *         Defined here (weak override) so it lives next to DrawTile_DMA.
@@ -216,7 +229,12 @@ void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
         HAL_GPIO_WritePin(s_dma_dev->cs_port, s_dma_dev->cs_pin, GPIO_PIN_SET);
         s_dma_buf = NULL;
         s_dma_dev = NULL;
+        dma_tx_complete = 1; /* Set flag to indicate DMA transfer is complete */
     }
+}
+
+uint8_t isTxComplete() {
+    return dma_tx_complete;
 }
 
 /**

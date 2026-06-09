@@ -246,6 +246,34 @@ void Engine_Draw_Sprite_To_Buffer(int dest_x, int dest_y, const uint16_t *sprite
     }
 }
 
+void Engine_Draw_Tile_Loop_Clipping(int dest_x, int dest_y, const uint16_t *tile_data) {
+    // 1. Kiểm tra nếu ô gạch nằm HOÀN TOÀN BÊN NGOÀI màn hình thì thoát luôn
+    if (dest_x <= -TILE_SIZE || dest_x >= LCD_WIDTH || dest_y <= -TILE_SIZE || dest_y >= LCD_HEIGHT) {
+        return;
+    }
+
+    // 2. Khởi tạo giới hạn vẽ mặc định (Vẽ trọn vẹn 16x16)
+    int x_start = 0, x_end = TILE_SIZE;
+    int y_start = 0, y_end = TILE_SIZE;
+
+    // 3. Thực hiện tính toán co ngắn vòng lặp nếu chớm viền (Clipping)
+    if (dest_x < 0)                  x_start = -dest_x;       // Thò trái
+    if (dest_x + TILE_SIZE > LCD_WIDTH) x_end = LCD_WIDTH - dest_x; // Thò phải
+    if (dest_y < 0)                  y_start = -dest_y;       // Thò trên
+    if (dest_y + TILE_SIZE > LCD_HEIGHT) y_end = LCD_HEIGHT - dest_y; // Thò dưới
+
+    // 4. Vòng lặp tối ưu: Không chứa bất kỳ câu lệnh "if" kiểm tra biên nào ở trong
+    for (int y = y_start; y < y_end; y++) {
+        // Tính toán trước chỉ số dòng của bộ đệm 1D để tăng tốc xử lý con trỏ
+        int buffer_row = (dest_y + y) * LCD_WIDTH + dest_x;
+        int tile_row   = y * TILE_SIZE;
+
+        for (int x = x_start; x < x_end; x++) {
+            FrameBuffer[buffer_row + x] = tile_data[tile_row + x];
+        }
+    }
+}
+
 /* Renders the tilemap to a frame buffer, accounting for camera scroll position.
 * Calculates which map columns are visible, applies horizontal offset clipping,
 * and prepares tiles for display on the 320x240 LCD.
@@ -298,8 +326,36 @@ void Engine_Draw_Map_To_Buffer(int camera_x){
             /*calculate the screen pixel position for this tile */
             screen_px_x = ((int16_t)screen_tile_col * TILE_SIZE) - map_px_offset_x;
             screen_px_y = (int16_t)map_tile_row * TILE_SIZE;
-            Engine_Draw_Sprite_To_Buffer(screen_px_x, screen_px_y, (const uint16_t *)sprite);
+            Engine_Draw_Tile_Loop_Clipping(screen_px_x, screen_px_y, (const uint16_t *)sprite);
         }
     }
+}
+
+void Engine_Render_Frame(ST7789_HandleTypeDef *dev, int camera_x, int mario_x, int mario_y) {
+    
+    // BƯỚC 1: ĐỒNG BỘ - Đảm bảo GPDMA đã truyền xong khung hình cũ trước đó
+    while (dma_tx_complete == 0) {
+        // Đứng chờ cho đến khi cờ dma_tx_complete được bật lên trong ngắt Interrupt
+    }
+    dma_tx_complete = 0; // Khóa cờ chuẩn bị cho Frame mới
+
+    // BƯỚC 2: XÓA NỀN (CLEAR BUFFER)
+    // Phủ toàn bộ mảng RAM bằng màu xanh da trời (Mã màu RGB565: 0x5DFF)
+    for (uint32_t i = 0; i < (SCREEN_W * SCREEN_H); i++) {
+        FrameBuffer[i] = 0x5DFF;
+    }
+
+    // BƯỚC 3: DÁN NỀN MAP KHÔNG GIAN 2D
+    Engine_Draw_Map_To_Buffer(camera_x);
+
+    // BƯỚC 4: DÁN ĐÈ NHÂN VẬT MARIO (Có tính toán tọa độ tương đối với Camera)
+    int mario_screen_x = mario_x - camera_x; 
+    Engine_Draw_Sprite_To_Buffer(mario_screen_x, mario_y, Mario_Sprite_Pixels);
+
+    // BƯỚC 5: PHÁT DMA NGẦM - Đổ bộ bộ đệm RAM xuống màn hình qua SPI
+    // Tổng số lượng byte cần truyền = 320 * 240 pixels * 2 bytes = 153,600 bytes.
+    // Vì dev->spi->hdmatx (GPDMA1 Channel 7) đã cấu hình Linear Mode 8-bit chuẩn, 
+    // hàm HAL sẽ tự kích hoạt luồng truyền tải chạy ngầm hoàn toàn và giải phóng CPU ngay tức thì!
+    HAL_SPI_Transmit_DMA(dev->spi, (uint8_t *)FrameBuffer, (SCREEN_W * SCREEN_H * 2));
 }
 
