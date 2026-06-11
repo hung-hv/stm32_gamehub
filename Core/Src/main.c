@@ -35,7 +35,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define CAMERA_SCROLL_STEP  2u   /* pixels per button press */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -137,24 +137,24 @@ int main(void)
   /* Sky background */
   ST7789_FillScreen(&myDisplay, COLOR_SKY);
 
-  /* Ground: rows 13 and 14 (y = 208 and 224) */
-  ST7789_DrawRectangle(&myDisplay, 0, 13u * TILE_SIZE, LCD_WIDTH, TILE_SIZE, COLOR_GROUND);
-  ST7789_DrawRectangle(&myDisplay, 0, 14u * TILE_SIZE, LCD_WIDTH, TILE_SIZE, COLOR_GROUND);
-
-  /* Pipe: cols 5-6, rows 11-13 (lip = bright green, body = dark green) */
-  ST7789_DrawRectangle(&myDisplay,  5u * TILE_SIZE, 11u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_PIPE_LT); /* TL */
-  ST7789_DrawRectangle(&myDisplay,  6u * TILE_SIZE, 11u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_PIPE_LT); /* TR */
-  ST7789_DrawRectangle(&myDisplay,  5u * TILE_SIZE, 12u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_PIPE_DK); /* BL */
-  ST7789_DrawRectangle(&myDisplay,  6u * TILE_SIZE, 12u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_PIPE_DK); /* BR */
-
-  /* Brick / Question platform: row 8 (y = 128), cols 10-13 */
-  ST7789_DrawRectangle(&myDisplay, 10u * TILE_SIZE, 8u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_BRICK);
-  ST7789_DrawRectangle(&myDisplay, 11u * TILE_SIZE, 8u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_BRICK);
-  ST7789_DrawRectangle(&myDisplay, 12u * TILE_SIZE, 8u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_QUESTION);
-  ST7789_DrawRectangle(&myDisplay, 13u * TILE_SIZE, 8u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_BRICK);
-
-  /* Stone block: row 10 (y = 160), col 2 */
-  ST7789_DrawRectangle(&myDisplay,  2u * TILE_SIZE, 10u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_BLOCK);
+//  /* Ground: rows 13 and 14 (y = 208 and 224) */
+//  ST7789_DrawRectangle(&myDisplay, 0, 13u * TILE_SIZE, LCD_WIDTH, TILE_SIZE, COLOR_GROUND);
+//  ST7789_DrawRectangle(&myDisplay, 0, 14u * TILE_SIZE, LCD_WIDTH, TILE_SIZE, COLOR_GROUND);
+//
+//  /* Pipe: cols 5-6, rows 11-13 (lip = bright green, body = dark green) */
+//  ST7789_DrawRectangle(&myDisplay,  5u * TILE_SIZE, 11u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_PIPE_LT); /* TL */
+//  ST7789_DrawRectangle(&myDisplay,  6u * TILE_SIZE, 11u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_PIPE_LT); /* TR */
+//  ST7789_DrawRectangle(&myDisplay,  5u * TILE_SIZE, 12u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_PIPE_DK); /* BL */
+//  ST7789_DrawRectangle(&myDisplay,  6u * TILE_SIZE, 12u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_PIPE_DK); /* BR */
+//
+//  /* Brick / Question platform: row 8 (y = 128), cols 10-13 */
+//  ST7789_DrawRectangle(&myDisplay, 10u * TILE_SIZE, 8u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_BRICK);
+//  ST7789_DrawRectangle(&myDisplay, 11u * TILE_SIZE, 8u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_BRICK);
+//  ST7789_DrawRectangle(&myDisplay, 12u * TILE_SIZE, 8u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_QUESTION);
+//  ST7789_DrawRectangle(&myDisplay, 13u * TILE_SIZE, 8u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_BRICK);
+//
+//  /* Stone block: row 10 (y = 160), col 2 */
+//  ST7789_DrawRectangle(&myDisplay,  2u * TILE_SIZE, 10u * TILE_SIZE, TILE_SIZE, TILE_SIZE, COLOR_BLOCK);
 
 
   uint8_t tile_id = 0;
@@ -175,12 +175,13 @@ int main(void)
 	   * Both buttons are active-LOW (GPIO_PIN_RESET = pressed).
 	   * PB0  → scroll RIGHT (+4 px)   PC13 → scroll LEFT  (-4 px)  */
 	  /* PB2 LED: toggle every ~500 ms (31 × 16 ms = 496 ms), independent of buttons */
-    ST7789_RenderScreen(&myDisplay);
+//    ST7789_RenderScreen(&myDisplay);
+	  Engine_Render_Frame(&myDisplay, camera_x, 0, 0);
 	  led_counter++;
 	  if (led_counter >= 20u) {
 		  led_counter = 0u;
 		  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_2);
-      ST7789_RenderTile16x16(&myDisplay, 50, 50, tile_id);
+      // ST7789_RenderTile16x16(&myDisplay, 50, 50, tile_id);
       tile_id = tile_id +1;
       if(tile_id >= 5){
         tile_id = 0;
@@ -191,19 +192,19 @@ int main(void)
 	  btn_left  = (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9) == GPIO_PIN_RESET);
 
 	  if (btn_right) {
-		  if (camera_x + 4u <= (MAP_PIXEL_WIDTH - LCD_WIDTH))
-			  camera_x += 4u;
+		  if (camera_x + CAMERA_SCROLL_STEP <= (MAP_PIXEL_WIDTH - LCD_WIDTH))
+			  camera_x += CAMERA_SCROLL_STEP;
 		  else
 			  camera_x = (MAP_PIXEL_WIDTH - LCD_WIDTH);
 	  }
 	  if (btn_left) {
-		  if (camera_x >= 4u)
-			  camera_x -= 4u;
+		  if (camera_x >= CAMERA_SCROLL_STEP)
+			  camera_x -= CAMERA_SCROLL_STEP;
 		  else
 			  camera_x = 0u;
 	  }
 
-	  HAL_Delay(10u);    /* ~60 fps polling rate */
+	  HAL_Delay(5u);    /* ~60 fps polling rate */
 	  btn_right = 0;
 	  btn_left = 0;
   }
