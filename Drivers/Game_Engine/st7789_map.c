@@ -332,30 +332,34 @@ void Engine_Draw_Map_To_Buffer(int camera_x){
 }
 
 void Engine_Render_Frame(ST7789_HandleTypeDef *dev, int camera_x, int mario_x, int mario_y) {
-    
+    (void)mario_x; // Currently unused, but can be used for future character rendering
+    (void)mario_y; // Currently unused, but can be used for future character rendering
     // BƯỚC 1: ĐỒNG BỘ - Đảm bảo GPDMA đã truyền xong khung hình cũ trước đó
-    while (dma_tx_complete == 0) {
-        // Đứng chờ cho đến khi cờ dma_tx_complete được bật lên trong ngắt Interrupt
+    if (isTxComplete()) {
+        // Nếu DMA đã hoàn tất, có thể bắt đầu vẽ khung hình mới
+        // BƯỚC 2: XÓA NỀN (CLEAR BUFFER)
+        // Phủ toàn bộ mảng RAM bằng màu xanh da trời (Mã màu RGB565: 0x5DFF)
+        for (uint32_t i = 0; i < (LCD_WIDTH * LCD_HEIGHT); i++) {
+            FrameBuffer[i] = 0xBBBB;
+        }
+
+        // BƯỚC 3: DÁN NỀN MAP KHÔNG GIAN 2D
+       Engine_Draw_Map_To_Buffer(camera_x);
+
+        // BƯỚC 4: DÁN ĐÈ NHÂN VẬT MARIO (Có tính toán tọa độ tương đối với Camera)
+        // int mario_screen_x = mario_x - camera_x; 
+        // Engine_Draw_Sprite_To_Buffer(mario_screen_x, mario_y, Mario_Sprite_Pixels);
+
+        // BƯỚC 5: PHÁT DMA NGẦM - Đổ bộ bộ đệm RAM xuống màn hình qua SPI
+        // Tổng số lượng byte cần truyền = 320 * 240 pixels * 2 bytes = 153,600 bytes.
+        // Vì dev->spi->hdmatx (GPDMA1 Channel 7) đã cấu hình Linear Mode 8-bit chuẩn, 
+        // hàm HAL sẽ tự kích hoạt luồng truyền tải chạy ngầm hoàn toàn và giải phóng CPU ngay tức thì!
+        ST7789_RenderMap_DMA(dev, FrameBuffer);
+    } else {
+        // Nếu DMA vẫn đang truyền, có thể chọn cách bỏ qua khung hình này hoặc chờ thêm một chút
+        return; // Bỏ qua khung hình này để tránh xung đột DMA
     }
-    dma_tx_complete = 0; // Khóa cờ chuẩn bị cho Frame mới
 
-    // BƯỚC 2: XÓA NỀN (CLEAR BUFFER)
-    // Phủ toàn bộ mảng RAM bằng màu xanh da trời (Mã màu RGB565: 0x5DFF)
-    for (uint32_t i = 0; i < (SCREEN_W * SCREEN_H); i++) {
-        FrameBuffer[i] = 0x5DFF;
-    }
-
-    // BƯỚC 3: DÁN NỀN MAP KHÔNG GIAN 2D
-    Engine_Draw_Map_To_Buffer(camera_x);
-
-    // BƯỚC 4: DÁN ĐÈ NHÂN VẬT MARIO (Có tính toán tọa độ tương đối với Camera)
-    int mario_screen_x = mario_x - camera_x; 
-    Engine_Draw_Sprite_To_Buffer(mario_screen_x, mario_y, Mario_Sprite_Pixels);
-
-    // BƯỚC 5: PHÁT DMA NGẦM - Đổ bộ bộ đệm RAM xuống màn hình qua SPI
-    // Tổng số lượng byte cần truyền = 320 * 240 pixels * 2 bytes = 153,600 bytes.
-    // Vì dev->spi->hdmatx (GPDMA1 Channel 7) đã cấu hình Linear Mode 8-bit chuẩn, 
-    // hàm HAL sẽ tự kích hoạt luồng truyền tải chạy ngầm hoàn toàn và giải phóng CPU ngay tức thì!
-    HAL_SPI_Transmit_DMA(dev->spi, (uint8_t *)FrameBuffer, (SCREEN_W * SCREEN_H * 2));
+    
 }
 
