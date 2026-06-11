@@ -12,6 +12,10 @@
 #include "fonts.h"
 #include <stdint.h>
 
+/*TODO: stub fixed screen size*/
+#define LCD_WIDTH  ((uint16_t)320u)
+#define LCD_HEIGHT ((uint16_t)240u)
+
 // 1. Cấu trúc cấu hình phần cứng (Hardware Abstraction)
 typedef struct {
     SPI_HandleTypeDef *spi;
@@ -32,6 +36,9 @@ void ST7789_DrawRectangle_DMA(ST7789_HandleTypeDef *dev, uint16_t x, uint16_t y,
 void ST7789_DrawTile_DMA(ST7789_HandleTypeDef *dev, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t *pTileData);
 void ST7789_WaitBuf(const uint8_t *buf);
 void ST7789_WaitDMA(ST7789_HandleTypeDef *dev);
+
+void ST7789_RenderMap_DMA(ST7789_HandleTypeDef *dev, uint16_t *frame_buf);
+uint8_t isTxComplete();
 
 /* Write char and string */
 void ST7789_WriteChar(ST7789_HandleTypeDef *dev, uint16_t x, uint16_t y, char ch, FontDef font, uint16_t color, uint16_t bgcolor);

@@ -12,7 +12,20 @@
  * HAL_SPI_TxCpltCallback can release CS without a global handle. */
 static ST7789_HandleTypeDef *s_dma_dev = NULL;
 static const uint8_t        *s_dma_buf = NULL;  /* which buffer DMA is currently reading */
-volatile uint8_t dma_tx_complete = 0; /* Flag set in DMA complete callback, cleared before new transfer */
+volatile uint8_t dma_tx_complete = 1; /* Starts as 1 (idle/ready). Cleared before DMA, set again in callback. */
+
+/* Callback dispatched at the end of every DMA burst (ISR context).
+ * ST7789_DrawTile_DMA  → ST7789_Tile_Done      (release CS, mark idle)
+ * ST7789_RenderMap_DMA → ST7789_FB_ChunkContinue (send next chunk / finalise) */
+typedef void (*ST7789_TxDoneCallback)(void);
+static ST7789_TxDoneCallback s_tx_done_cb = NULL;
+
+/* Framebuffer chunked-transfer state. 240 rows split into 3×80 chunks so
+ * each DMA Size argument fits inside uint16_t (max 65,535 bytes).        */
+#define FB_CHUNK_ROWS   80u
+#define FB_CHUNK_BYTES  (LCD_WIDTH * FB_CHUNK_ROWS * 2u)   /* 51,200 */
+static uint8_t  *s_fb_chunk_ptr   = NULL;   /* address of next chunk to send  */
+static uint16_t  s_fb_chunks_left = 0u;     /* chunks remaining after current */
 
 // Hàm nội bộ (Private) chỉ dùng trong file này
 static void WriteCommand(ST7789_HandleTypeDef *dev, uint8_t cmd) {
@@ -170,6 +183,38 @@ void ST7789_DrawRectangle(ST7789_HandleTypeDef *dev, uint16_t x, uint16_t y, uin
     HAL_GPIO_WritePin(dev->cs_port, dev->cs_pin, GPIO_PIN_SET);
 }
 
+/* -------------------------------------------------------------------------
+ *  Internal DMA-completion handlers — registered in s_tx_done_cb before
+ *  each HAL_SPI_Transmit_DMA call.  Executed from HAL_SPI_TxCpltCallback.
+ * ---------------------------------------------------------------------- */
+
+/* Common teardown: release CS, clear tracking state, signal frame ready. */
+static void ST7789_Tile_Done(void)
+{
+    HAL_GPIO_WritePin(s_dma_dev->cs_port, s_dma_dev->cs_pin, GPIO_PIN_SET);
+    s_dma_buf       = NULL;
+    s_dma_dev       = NULL;
+    s_tx_done_cb    = NULL;
+    dma_tx_complete = 1;
+}
+
+/* Framebuffer continuation: fire the next 80-row chunk, or finalise when
+ * all chunks have been transmitted.                                       */
+static void ST7789_FB_ChunkContinue(void)
+{
+    if (s_fb_chunks_left > 0u)
+    {
+        s_fb_chunks_left--;
+        uint8_t *p      = s_fb_chunk_ptr;
+        s_fb_chunk_ptr += FB_CHUNK_BYTES;
+        HAL_SPI_Transmit_DMA(s_dma_dev->spi, p, (uint16_t)FB_CHUNK_BYTES);
+    }
+    else
+    {
+        ST7789_Tile_Done();   /* all chunks done — release bus, set flag */
+    }
+}
+
 /**
  * @brief  Draw a tile (or any rectangle) from a pre-built pixel buffer using
  *         non-blocking DMA.  Returns immediately; CS is released by
@@ -193,9 +238,10 @@ void ST7789_DrawTile_DMA(ST7789_HandleTypeDef *dev,
     /* 2. Program the display window using blocking SPI (command bytes only). */
     SetWindow(dev, x, y, (uint16_t)(x + w - 1u), (uint16_t)(y + h - 1u));
 
-    /* 2. Store device pointer so the TX callback can release CS. */
-    s_dma_dev = dev;
-    s_dma_buf = pTileData;
+    /* 2. Register context and handler so the callback knows what to do. */
+    s_dma_dev    = dev;
+    s_dma_buf    = pTileData;
+    s_tx_done_cb = ST7789_Tile_Done;
 
     /* 3. Assert CS and switch to DATA mode, then fire DMA. */
     HAL_GPIO_WritePin(dev->cs_port, dev->cs_pin, GPIO_PIN_RESET);
@@ -206,16 +252,29 @@ void ST7789_DrawTile_DMA(ST7789_HandleTypeDef *dev,
     /* Returns immediately.  HAL_SPI_TxCpltCallback releases CS when done.  */
 }
 
-void ST7789_RenderMap(ST7789_HandleTypeDef *dev, uint8_t *frame_buf, uint32_t buf_size) {
-    SetWindow(dev, 0, 0, 319, 239);
+void ST7789_RenderMap_DMA(ST7789_HandleTypeDef *dev, uint16_t *frame_buf) {
+    /* Caller already checked isTxComplete(), so SPI is idle here.
+     * SetWindow uses blocking SPI — safe because DMA is not running. */
+    dma_tx_complete = 0;
+
+    SetWindow(dev, 0, 0, LCD_WIDTH - 1u, LCD_HEIGHT - 1u);
+
+    /* Register context and chunk-continuation handler.
+     * 153,600 bytes / 3 chunks = 51,200 bytes each — fits uint16_t.  */
+    s_dma_dev      = dev;
+    s_dma_buf      = (const uint8_t *)frame_buf;
+    s_tx_done_cb   = ST7789_FB_ChunkContinue;
+
+    /* Chunk state: chunk 0 is sent below; chunks 1 and 2 follow via callback. */
+    s_fb_chunk_ptr   = (uint8_t *)frame_buf + FB_CHUNK_BYTES;
+    s_fb_chunks_left = (LCD_HEIGHT / FB_CHUNK_ROWS) - 1u;   /* = 2 */
 
     HAL_GPIO_WritePin(dev->cs_port, dev->cs_pin, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(dev->dc_port, dev->dc_pin, GPIO_PIN_SET);
 
-    /* Send the entire frame buffer in one blocking call. */
-    HAL_SPI_Transmit(dev->spi, frame_buf, 320u * 240u * 2u, HAL_MAX_DELAY);
-
-    HAL_GPIO_WritePin(dev->cs_port, dev->cs_pin, GPIO_PIN_SET);
+    /* Fire chunk 0.  ST7789_FB_ChunkContinue drives chunks 1 and 2 from
+     * the ISR; ST7789_Tile_Done releases CS and sets dma_tx_complete = 1. */
+    HAL_SPI_Transmit_DMA(dev->spi, (uint8_t *)frame_buf, (uint16_t)FB_CHUNK_BYTES);
 }
 
 /**
@@ -224,12 +283,14 @@ void ST7789_RenderMap(ST7789_HandleTypeDef *dev, uint8_t *frame_buf, uint32_t bu
  */
 void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
 {
-    if ((s_dma_dev != NULL) && (hspi->Instance == s_dma_dev->spi->Instance))
+    if ((s_dma_dev == NULL) || (hspi->Instance != s_dma_dev->spi->Instance)) return;
+
+    /* Dispatch to whichever handler was registered before the DMA burst:
+     *   ST7789_Tile_Done        — single tile / last chunk: release CS, set flag
+     *   ST7789_FB_ChunkContinue — framebuffer: fire next chunk or finalise       */
+    if (s_tx_done_cb != NULL)
     {
-        HAL_GPIO_WritePin(s_dma_dev->cs_port, s_dma_dev->cs_pin, GPIO_PIN_SET);
-        s_dma_buf = NULL;
-        s_dma_dev = NULL;
-        dma_tx_complete = 1; /* Set flag to indicate DMA transfer is complete */
+        s_tx_done_cb();
     }
 }
 
