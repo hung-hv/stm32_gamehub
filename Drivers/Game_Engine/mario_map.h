@@ -24,6 +24,10 @@
  */
 extern uint8_t Mario_World_1_1[15][90];
 
+/* Mario character sprite — 16×16 uint16_t RGB565 pixels (little-endian,
+ * CPU-native). Used by Engine_Draw_Sprite_To_Buffer().              */
+extern const uint16_t Mario_Sprite_Pixels[16u * 16u];
+
 /* Per-tile sprite data, indexed by TileID_t value (0..TILE_ID_COUNT-1).
  * NULL  → no sprite; the renderer falls back to the solid colour palette.
  * Non-NULL → pointer to TILE_SIZE*TILE_SIZE*2 bytes in flash, stored as

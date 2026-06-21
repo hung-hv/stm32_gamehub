@@ -220,28 +220,46 @@ void ST7789_RenderScreen(ST7789_HandleTypeDef *dev)
     }
 }
 
+/**
+  * @brief  Hàm dán Sprite nhân vật vào FrameBuffer có xử lý xén viền và trong suốt
+  * @param  dest_x: Tọa độ X của Mario trên MÀN HÌNH (mario_x - camera_x)
+  * @param  dest_y: Tọa độ Y của Mario trên MÀN HÌNH
+  * @param  sprite_data: Con trỏ trỏ tới mảng 256 pixel (16x16) của Mario trong Flash
+  */
 void Engine_Draw_Sprite_To_Buffer(int dest_x, int dest_y, const uint16_t *sprite_data) {
-    if (dest_x <= -TILE_SIZE || dest_x >= LCD_WIDTH || dest_y <= -TILE_SIZE || dest_y >= LCD_HEIGHT) return;
+    
+    // 1. Nếu nhân vật lọt hoàn toàn ra ngoài 4 cạnh màn hình -> Thoát luôn để cứu CPU
+    if (dest_x <= -TILE_SIZE || dest_x >= LCD_WIDTH || dest_y <= -TILE_SIZE || dest_y >= LCD_HEIGHT) {
+        return;
+    }
 
+    // 2. Thiết lập giới hạn quét mặc định (Full ô vuông 16x16)
     int x_start = 0, x_end = TILE_SIZE;
     int y_start = 0, y_end = TILE_SIZE;
 
-    if (dest_x < 0)                  x_start = -dest_x;
-    if (dest_x + TILE_SIZE > LCD_WIDTH) x_end = LCD_WIDTH - dest_x;
-    if (dest_y < 0)                  y_start = -dest_y;
-    if (dest_y + TILE_SIZE > LCD_HEIGHT) y_end = LCD_HEIGHT - dest_y;
+    // 3. Thuật toán Clipping: Co ngắn giới hạn vòng lặp nếu Mario chớm đi vào/ra rìa màn hình
+    if (dest_x < 0)                  x_start = -dest_x;       // Khuất bên viền trái
+    if (dest_x + TILE_SIZE > LCD_WIDTH) x_end = LCD_WIDTH - dest_x; // Khuất bên viền phải
+    if (dest_y < 0)                  y_start = -dest_y;       // Khuất bên viền trên
+    if (dest_y + TILE_SIZE > LCD_HEIGHT) y_end = LCD_HEIGHT - dest_y; // Rơi xuống viền dưới
 
+    // 4. Tiến hành dán pixel
     for (int y = y_start; y < y_end; y++) {
-        int buffer_row = (dest_y + y) * LCD_WIDTH + dest_x;
-        int tile_row   = y * TILE_SIZE;
+        // Tính toán trước chỉ số dòng để tối ưu tốc độ con trỏ cho CPU Cortex-M33
+        int buffer_row_idx = (dest_y + y) * LCD_WIDTH + dest_x;
+        int sprite_row_idx = y * TILE_SIZE;
 
         for (int x = x_start; x < x_end; x++) {
-            uint16_t color = sprite_data[tile_row + x];
             
-            // Mẹo: Giả sử màu Đen (0x0000) là màu nền trong suốt của nhân vật Mario
-            if (color != 0x0000) { 
-                FrameBuffer[buffer_row + x] = color;
+            // Lấy màu của pixel hiện tại từ mảng Sprite gốc trong Flash
+            uint16_t pixel_color = sprite_data[sprite_row_idx + x];
+
+            // ĐIỀU KIỆN CỐT LÕI: Chỉ vẽ nếu pixel đó KHÔNG PHẢI là màu trong suốt
+            if (pixel_color != COLOR_TRANSPARENT) {
+                // Đè màu của Mario lên trên màu nền (Bầu trời/Bản đồ) đang có trong RAM
+                FrameBuffer[buffer_row_idx + x] = pixel_color;
             }
+            // Nếu là màu TRANSPARENT_COLOR, CPU bỏ qua, màu nền cũ bên dưới sẽ được giữ nguyên!
         }
     }
 }
@@ -332,8 +350,8 @@ void Engine_Draw_Map_To_Buffer(int camera_x){
 }
 
 void Engine_Render_Frame(ST7789_HandleTypeDef *dev, int camera_x, int mario_x, int mario_y) {
-    (void)mario_x; // Currently unused, but can be used for future character rendering
-    (void)mario_y; // Currently unused, but can be used for future character rendering
+    // (void)mario_x; // Currently unused, but can be used for future character rendering
+    // (void)mario_y; // Currently unused, but can be used for future character rendering
     // BƯỚC 1: ĐỒNG BỘ - Đảm bảo GPDMA đã truyền xong khung hình cũ trước đó
     if (isTxComplete()) {
         // Nếu DMA đã hoàn tất, có thể bắt đầu vẽ khung hình mới
@@ -344,11 +362,11 @@ void Engine_Render_Frame(ST7789_HandleTypeDef *dev, int camera_x, int mario_x, i
         }
 
         // BƯỚC 3: DÁN NỀN MAP KHÔNG GIAN 2D
-       Engine_Draw_Map_To_Buffer(camera_x);
+        Engine_Draw_Map_To_Buffer(camera_x);
 
         // BƯỚC 4: DÁN ĐÈ NHÂN VẬT MARIO (Có tính toán tọa độ tương đối với Camera)
-        // int mario_screen_x = mario_x - camera_x; 
-        // Engine_Draw_Sprite_To_Buffer(mario_screen_x, mario_y, Mario_Sprite_Pixels);
+        int mario_screen_x = mario_x - camera_x; 
+        Engine_Draw_Sprite_To_Buffer(mario_screen_x, mario_y, Mario_Sprite_Pixels);
 
         // BƯỚC 5: PHÁT DMA NGẦM - Đổ bộ bộ đệm RAM xuống màn hình qua SPI
         // Tổng số lượng byte cần truyền = 320 * 240 pixels * 2 bytes = 153,600 bytes.

@@ -60,6 +60,7 @@ typedef enum {
 #define COLOR_BLOCK     ((uint16_t)0x8410u)   /* ~#808080  mid grey stone     */
 #define COLOR_PIPE_LT   ((uint16_t)0x0540u)   /* ~#00AA00  pipe top / lip     */
 #define COLOR_PIPE_DK   ((uint16_t)0x0320u)   /* ~#006400  pipe body          */
+#define COLOR_TRANSPARENT  ((uint16_t)0x0000u)   /* Transparent color           */
 
 /* =========================================================================
  *  Public API

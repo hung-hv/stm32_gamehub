@@ -464,3 +464,86 @@ const uint8_t * const tile_sprites[TILE_ID_COUNT] = {
     /* 7 TILE_PIPE_BL  */ pipe_bl_sprite,
     /* 8 TILE_PIPE_BR  */ pipe_br_sprite,
 };
+
+/* ==========================================================================
+ *  Mario character sprite — 16×16 pixels, native uint16_t RGB565.
+ *  Used by Engine_Draw_Sprite_To_Buffer() which writes directly into
+ *  FrameBuffer (uint16_t[]).  Values are little-endian (CPU native),
+ *  NOT big-endian byte pairs like the tile sprites.
+ *
+ *  Transparent colour: 0x0000 (black) — these pixels are skipped.
+ *
+ *  Colour palette (values are BYTE-SWAPPED from visual RGB565):
+ *    The FrameBuffer is uint16_t[] on a little-endian MCU.  SPI DMA sends
+ *    bytes LSB-first, so ST7789 sees each uint16_t byte-swapped.  To get the
+ *    correct colour on screen, every value stored here must be the
+ *    byte-swap of the desired RGB565 value.
+ *
+ *    Visual RGB565  →  stored uint16_t (byte-swapped)
+ *    MR___  0x0000  →  0x0000  transparent (colour-key, skipped by Engine_Draw_Sprite_To_Buffer)
+ *    MR_RD  0xE000  →  0x00E0  red       #E00000  hat / shirt
+ *    MR_SK  0xFD46  →  0x46FD  skin      #F8A830  face / hands / legs
+ *    MR_BR  0x8200  →  0x0082  brown     #804000  hair / mustache
+ *    MR_BL  0x0018  →  0x1800  blue      #0000C0  overalls
+ *    MR_BK  0x2104  →  0x0421  near-blk  #202020  outline / shoes
+ *    MR_WH  0xFFFF  →  0xFFFF  white              eye highlight (symmetric)
+ *
+ *  Layout (right-facing standing pose):
+ *    rows  0–1 : red hat
+ *    rows  2–5 : face with brown hair and mustache
+ *    row   6   : neck
+ *    rows  7–9 : blue overalls body with red buttons
+ *    rows 10–12: red trousers / legs
+ *    rows 13–15: near-black shoes
+ * ========================================================================== */
+
+#define MR___  0x0000u   /* transparent — DO NOT change, used as colour-key */
+#define MR_RD  0x00E0u   /* byte-swap of 0xE000 red    */
+#define MR_SK  0x46FDu   /* byte-swap of 0xFD46 skin   */
+#define MR_BR  0x0082u   /* byte-swap of 0x8200 brown  */
+#define MR_BL  0x1800u   /* byte-swap of 0x0018 blue   */
+#define MR_BK  0x0421u   /* byte-swap of 0x2104 dk-blk */
+#define MR_WH  0xFFFFu   /* 0xFFFF white — symmetric   */
+
+const uint16_t Mario_Sprite_Pixels[16u * 16u] = {
+    /* row  0 – hat top */
+    MR___, MR___, MR___, MR_RD, MR_RD, MR_RD, MR_RD, MR_RD, MR_RD, MR___, MR___, MR___, MR___, MR___, MR___, MR___,
+    /* row  1 – hat brim */
+    MR___, MR___, MR_RD, MR_RD, MR_RD, MR_RD, MR_RD, MR_RD, MR_RD, MR_RD, MR_RD, MR___, MR___, MR___, MR___, MR___,
+    /* row  2 – hair / face top */
+    MR___, MR___, MR_BR, MR_BR, MR_BR, MR_SK, MR_SK, MR_SK, MR_SK, MR_SK, MR_SK, MR___, MR___, MR___, MR___, MR___,
+    /* row  3 – face */
+    MR___, MR_BR, MR_SK, MR_BR, MR_SK, MR_SK, MR_BK, MR_SK, MR_SK, MR_SK, MR_SK, MR_SK, MR___, MR___, MR___, MR___,
+    /* row  4 – face / start of mustache */
+    MR___, MR_BR, MR_SK, MR_BR, MR_BR, MR_SK, MR_BK, MR_SK, MR_SK, MR_SK, MR_SK, MR___, MR___, MR___, MR___, MR___,
+    /* row  5 – mustache */
+    MR___, MR_BR, MR_BR, MR_SK, MR_SK, MR_BR, MR_BR, MR_BR, MR_BR, MR___, MR___, MR___, MR___, MR___, MR___, MR___,
+    /* row  6 – neck */
+    MR___, MR___, MR_SK, MR_SK, MR_SK, MR_SK, MR_SK, MR_SK, MR_SK, MR___, MR___, MR___, MR___, MR___, MR___, MR___,
+    /* row  7 – upper body / overalls */
+    MR___, MR___, MR_BL, MR_BL, MR_RD, MR_BL, MR_BL, MR_BL, MR___, MR___, MR___, MR___, MR___, MR___, MR___, MR___,
+    /* row  8 – body */
+    MR___, MR_BL, MR_BL, MR_BL, MR_RD, MR_BL, MR_BL, MR_BL, MR_BL, MR___, MR___, MR___, MR___, MR___, MR___, MR___,
+    /* row  9 – waist */
+    MR_BL, MR_BL, MR_BL, MR_RD, MR_RD, MR_RD, MR_BL, MR_BL, MR___, MR___, MR___, MR___, MR___, MR___, MR___, MR___,
+    /* row 10 – upper legs */
+    MR_SK, MR_SK, MR_RD, MR_WH, MR_RD, MR_SK, MR_SK, MR___, MR___, MR___, MR___, MR___, MR___, MR___, MR___, MR___,
+    /* row 11 – legs */
+    MR_SK, MR_SK, MR_SK, MR_RD, MR_SK, MR_SK, MR_SK, MR___, MR___, MR___, MR___, MR___, MR___, MR___, MR___, MR___,
+    /* row 12 – lower legs */
+    MR___, MR_SK, MR_SK, MR___, MR_SK, MR_SK, MR___, MR___, MR___, MR___, MR___, MR___, MR___, MR___, MR___, MR___,
+    /* row 13 – ankle */
+    MR___, MR_BK, MR_BK, MR___, MR_BK, MR_BK, MR___, MR___, MR___, MR___, MR___, MR___, MR___, MR___, MR___, MR___,
+    /* row 14 – shoes */
+    MR_BK, MR_BK, MR_BK, MR___, MR_BK, MR_BK, MR_BK, MR___, MR___, MR___, MR___, MR___, MR___, MR___, MR___, MR___,
+    /* row 15 – shoe tips */
+    MR_BK, MR_BK, MR___, MR___, MR___, MR_BK, MR_BK, MR___, MR___, MR___, MR___, MR___, MR___, MR___, MR___, MR___,
+};
+
+#undef MR___
+#undef MR_RD
+#undef MR_SK
+#undef MR_BR
+#undef MR_BL
+#undef MR_BK
+#undef MR_WH

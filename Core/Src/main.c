@@ -35,7 +35,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define CAMERA_SCROLL_STEP  2u   /* pixels per button press */
+#define CAMERA_SCROLL_STEP  1u   /* pixels per button press */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -57,6 +57,10 @@ ST7789_HandleTypeDef myDisplay;
  uint32_t led_counter = 0u;   /* counts 16ms ticks → toggle every 31 ticks ≈ 500ms */
  volatile uint8_t btn_right = 0;
  volatile uint8_t btn_left = 0;
+
+ /* Mario world-space position */
+ int32_t mario_x = 64;    /* world-space X — starts 4 tiles from left */
+ int32_t mario_y = 192;   /* world-space Y — standing on ground row 12 */
 
 /* USER CODE END PV */
 
@@ -176,7 +180,7 @@ int main(void)
 	   * PB0  → scroll RIGHT (+4 px)   PC13 → scroll LEFT  (-4 px)  */
 	  /* PB2 LED: toggle every ~500 ms (31 × 16 ms = 496 ms), independent of buttons */
 //    ST7789_RenderScreen(&myDisplay);
-	  Engine_Render_Frame(&myDisplay, camera_x, 0, 0);
+	  Engine_Render_Frame(&myDisplay, camera_x, mario_x, mario_y);
 	  led_counter++;
 	  if (led_counter >= 20u) {
 		  led_counter = 0u;
@@ -192,16 +196,28 @@ int main(void)
 	  btn_left  = (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9) == GPIO_PIN_RESET);
 
 	  if (btn_right) {
-		  if (camera_x + CAMERA_SCROLL_STEP <= (MAP_PIXEL_WIDTH - LCD_WIDTH))
-			  camera_x += CAMERA_SCROLL_STEP;
-		  else
-			  camera_x = (MAP_PIXEL_WIDTH - LCD_WIDTH);
+		  /* Move Mario right, clamp to map boundary */
+		  if (mario_x + CAMERA_SCROLL_STEP < (int32_t)(MAP_PIXEL_WIDTH - TILE_SIZE))
+			  mario_x += CAMERA_SCROLL_STEP;
 	  }
 	  if (btn_left) {
-		  if (camera_x >= CAMERA_SCROLL_STEP)
-			  camera_x -= CAMERA_SCROLL_STEP;
+		  /* Move Mario left, clamp to map boundary */
+		  if (mario_x - CAMERA_SCROLL_STEP >= 0)
+			  mario_x -= CAMERA_SCROLL_STEP;
 		  else
-			  camera_x = 0u;
+			  mario_x = 0;
+	  }
+
+	  /* Camera follows Mario: once Mario passes the screen centre,
+	   * scroll the camera so Mario stays at the horizontal midpoint.
+	   * Clamp camera to [0 .. MAP_PIXEL_WIDTH - LCD_WIDTH].           */
+	  {
+		  int32_t target_cam = mario_x - (int32_t)(LCD_WIDTH / 2);
+		  if (target_cam < 0)
+			  target_cam = 0;
+		  if (target_cam > (int32_t)(MAP_PIXEL_WIDTH - LCD_WIDTH))
+			  target_cam = (int32_t)(MAP_PIXEL_WIDTH - LCD_WIDTH);
+		  camera_x = (uint32_t)target_cam;
 	  }
 
 	  HAL_Delay(5u);    /* ~60 fps polling rate */
